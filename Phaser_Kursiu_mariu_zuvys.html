@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>The Fish of the Curonian Lagoon</title>
+    <link rel="stylesheet" type="text/css" href="styles.css">
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+    </style>
+</head>
+
+<body>
+    <div id="canvasContainer">
+        <canvas id="game"></canvas>
+    </div>
+        <div id="loginModal" style="display:none; position: absolute; top: 20%; left: 50%; transform: translate(-50%, -50%); z-index: 1000;">
+            <div style="background: white; padding: 20px; border-radius: 5px;">
+                <h2>Login</h2>
+                <input type="text" id="loginIdentifier" placeholder="Username or Email" />
+                <input type="password" id="loginPassword" placeholder="Password" />
+                <button id="loginBtn">Login</button>
+                <button onclick="document.getElementById('loginModal').style.display='none'">Close</button>
+            </div>
+        </div>
+
+        <div id="registerModal" style="display:none; position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); z-index: 1000;">
+            <div style="background: white; padding: 20px; border-radius: 5px;">
+                <h2>register</h2>
+                <input type="text" id="registerUsername" placeholder="username" />
+                <input type="email" id="registerEmail" placeholder="email" />
+                <input type="password" id="registerPassword" placeholder="password" />
+                <button id="registerBtn">register</button>
+                <button onclick="document.getElementById('registerModal').style.display='none'">Close</button>
+            </div>
+        </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.55.2/phaser.min.js"></script>
+    <script>
+        class MyGame extends Phaser.Scene {
+            constructor() {
+                super({ key: 'MyGame' });
+                this.selectedFish = null;
+                this.fish = null;
+                this.obstacles = null;
+                this.topBorder = null;
+                this.bottomBorder = null;
+                this.borderFull = false;
+
+                this.inputKeys = {};
+                this.score = 0;
+                this.speed = 5;
+                this.scoreText = null;
+                this.gameOver = false;
+                this.gameStopped = false;
+
+                this.gameOverText = null;
+                this.restartText = null;
+
+                this.userData = null;
+                this.firstDown = true;
+                this.username = null;
+                this.scoreSubmitted = false;
+
+                this.mainMusic = null;
+                this.gameOverMusic = null;
+                this.hookSfx = null;
+                this.mainMusicName = 'gameplayMusic';
+
+                this.scoreAchievements = [
+                    {
+                        name: 'highscore_5',
+                        description: 'Score more than 5 points',
+                        unlocked: false,
+                        unlockCondition: (score) => score >= 5
+                    },
+                    {
+                        name: 'highscore_30',
+                        description: 'Score more than 30 points',
+                        unlocked: false,
+                        unlockCondition: (score) => score >= 30
+                    },
+                    {
+                        name: 'highscore_50',
+                        description: 'Score more than 50 points',
+                        unlocked: false,
+                        unlockCondition: (score) => score >= 50
+                    }
+
+                ];
+
+            }
+
+            preload() {
+                this.load.image('starkis', 'assets/fish/starkis.png')
+                this.load.image('auksle', 'assets/fish/auksle.png')
+                this.load.image('eserys', 'assets/fish/eserys.png')
+                this.load.image('dygle', 'assets/fish/dygle.png')
+                this.load.image('nustatymzuve', 'assets/fish/nustatymzuve.png')
+                this.load.image('banginisNX', 'assets/fish/banginisNX.png')
+
+                this.load.image('starkisDead', 'assets/fish/starkis_dead.png');
+                this.load.image('auksleDead', 'assets/fish/auksle_dead.png');
+                this.load.image('eserysDead', 'assets/fish/eserys_dead.png');
+                this.load.image('dygleDead', 'assets/fish/dygle_dead.png')
+                this.load.image('nustatymzuveDead', 'assets/fish/nustatymzuve_Dead.png')
+                this.load.image('banginisNXDead', 'assets/fish/banginisNX_Dead.png')
+
+                this.load.image('fish_dead_bottom', 'assets/fish/fish_dead_bottom.png');
+                this.load.image('fish_dead_top', 'assets/fish/fish_dead_top.png');
+
+                this.load.image('obstacle', 'assets/obstacles/hook.png');
+                this.load.image('netObstruction', 'assets/obstacles/netObstruction.png');
+
+                this.load.image('topBorder', 'assets/obstacles/net.png');
+                this.load.image('bottomBorder', 'assets/obstacles/bottom.png');
+                this.load.audio('gameplayMusic', 'assets/music/gameplay.mp3');
+                this.load.audio('gameplayMusicAcapella', 'assets/music/gameplayAcapella.mp3');
+                this.load.audio('gameOverMusic', 'assets/music/gameOver.mp3');
+                this.load.audio('mimir', 'assets/music/mimir.mp3');
+                this.load.audio('hookSfx', 'assets/sfx/hook.mp3');
+
+            }
+
+            create() {
+                if (this.mainMusic) {
+                    this.mainMusic.stop();
+                }
+
+                this.mainMusic = this.sound.add(this.mainMusicName , { volume: 0.5, loop: true });
+                this.mainMusic.play();
+                this.gameOver = false;
+
+                this.gameOverText = this.add.text(this.game.config.width / 2, this.game.config.height / 2, 'Žaidimas baigtas', { fontSize: '64px', fill: '#FFF' }).setOrigin(0.5);
+                this.restartText = this.add.text(
+                    this.game.config.width / 2, 
+                    this.game.config.height / 2 + 70, 
+                    `Norėdamas pradėti laikyk tarpo klavišą, h, rodyklę į viršų arba kairįjį pelės klavišą.`, 
+                    {
+                        fontSize: '32px',
+                        fill: '#FFF',
+                        align: 'center', // Align text in the center
+                        wordWrap: { width: this.game.config.width - 100 } // Adjust the width as needed
+                    }
+                ).setOrigin(0.5);
+
+
+                this.gameOverText.setVisible(false);
+                this.restartText.setVisible(false);
+                
+                // Create the fish
+                this.selectedFish = this.game.selectedFish;
+                this.fish = this.physics.add.sprite(0, 0, this.selectedFish).setOrigin(0, 0);
+                this.fish.body.setSize(this.fish.width/10,this.fish.height/10);
+                console.log(this.fish.width/10,this.fish.height/10);
+                this.fish.y = 100
+                this.fish.x = 100;
+                this.fish.setDepth(5);
+
+                // Create obstacles group
+                this.obstacles = this.physics.add.group();
+                // Add collision
+                this.physics.add.collider(this.fish, this.obstacles, this.hitObstacle, null, this);
+
+                // Input listeners
+                this.input.on('pointerdown', () => {
+                    this.handleInput();
+                });
+                this.mouseIsDown = false;
+                this.input.on('pointerdown', () => this.mouseIsDown = true);
+                this.input.on('pointerup', () => this.mouseIsDown = false);
+                const keyCodes = [Phaser.Input.Keyboard.KeyCodes.H, Phaser.Input.Keyboard.KeyCodes.SPACE, Phaser.Input.Keyboard.KeyCodes.UP];
+                keyCodes.forEach((keyCode) => {
+                    const key = this.input.keyboard.addKey(keyCode);
+                    this.inputKeys[keyCode] = key;
+                    key.on('down', () => this.handleInput());
+                });
+
+                console.log(this.inputKeys);
+
+                this.topBorder = this.physics.add.group();
+                this.physics.add.collider(this.fish, this.topBorder, this.hitTopBorder,null,this);
+                
+                this.bottomBorder = this.physics.add.group();
+                this.physics.add.collider(this.fish, this.bottomBorder, this.hitBottomBorder,null,this);
+                
+                this.addBorderSegments(0);
+
+                let returnButton = this.add.text(this.game.config.width - 150, 16, 'Išeiti', { fontSize: '32px', fill: '#FFF' }).setInteractive();
+
+                returnButton.on('pointerdown', () => {
+                    this.resetGame();
+                    this.scene.pause();
+                    this.scene.launch('StartScene');
+                    this.scene.stop('MyGame');
+                    if (this.mainMusic) {
+                    this.mainMusic.stop();
+                    this.gameStopped = true;
+                }
+                });
+
+
+                // Score
+                this.scoreText = this.add.text(16, 16, 'Taškai: 0', { fontSize: '32px', fill: '#FFF' });
+
+                // Modify the event to use the new method
+                this.time.addEvent({
+                    delay: 1500,
+                    callback: this.addObstaclesBasedOnScore,
+                    callbackScope: this,
+                    loop: true
+                });
+            }
+
+            update() {
+                if (this.gameOver) {
+                    if (!this.scoreSubmitted){
+                        console.log(this.selectedFish);
+                        this.submitScore(this.selectedFish, this.score);
+                        this.scoreSubmitted = true;
+                        console.log("aa");
+                        this.updateScoreAchievements(this.score);
+                    }
+                    return;
+                }
+                const isAnyKeyDown = Object.values(this.inputKeys).some(key => key.isDown) || this.mouseIsDown;
+                if (isAnyKeyDown) {
+                    this.fish.setVelocityY(-300); // Adjust the velocity as needed
+                    for (let key in this.inputKeys) {
+                        if (Phaser.Input.Keyboard.JustDown(this.inputKeys[key])) {
+                            this.handleInput();
+                        }
+                        else if (this.inputKeys[key].isUp) {
+                            this.firstDown = true;
+                        }
+                    }
+                }
+
+                // Update obstacles
+                this.obstacles.getChildren().forEach(obstacle => {
+                    obstacle.x -= this.speed;
+
+                    if (obstacle.x < (-obstacle.width)) {
+                        obstacle.destroy();
+                    }
+                    else if((this.fish.x > obstacle.x) && (!obstacle.scored)){
+                        this.score+=1;
+                        this.speed+=0.2;
+                        this.scoreText.setText('Taškai: ' + this.score);
+                        obstacle.scored = true;
+                        obstacle.setVelocityY(-1000);
+                    }
+                    
+                });
+
+                this.topBorder.getChildren().forEach(topBorderSegment => {
+                    topBorderSegment.x -= this.speed;
+                    if (topBorderSegment.x < -800){
+                            topBorderSegment.destroy();
+                            this.borderFull = false; 
+                            console.log(topBorderSegment.x,this.borderFull)                       
+                    }
+                    if (topBorderSegment.x < 0 && !this.borderFull) {
+                        this.addBorderSegments(800);
+                        this.borderFull = true;           
+
+                    }                    
+                });
+
+                this.bottomBorder.getChildren().forEach(bottomBorderSegment => {
+                    bottomBorderSegment.x -= this.speed;
+                    if (bottomBorderSegment.x < -800){
+                            bottomBorderSegment.destroy();                      
+                    }           
+                });
+
+            }
+            handleInput() {
+                    // Centralized input handling logic
+                    if (this.gameStopped) {
+                        return;
+                    }
+                    if (this.gameOver) {
+                        if (this.mainMusic) {
+                            this.mainMusic.stop();
+                        }
+                        // Assuming gameOverText and restartText are objects that need to be destroyed.
+                        this.gameOverText.setVisible(false);
+                        this.restartText.setVisible(false);
+                        // Call the resetGame function to reset your game.
+                        this.resetGame();    
+                        return;
+                    }
+                    if (this.firstDown) {
+                        this.fish.setVelocityY(-400);
+                        this.speed += 0.1;
+                        this.firstDown = false;
+                    }
+            }
+
+            addHook(obstacleX,obstacleY) {
+                const obstacle = this.obstacles.create(obstacleX, obstacleY, 'obstacle');
+                obstacle.setOrigin(0, 0);
+                obstacle.body.setAllowGravity(false);
+                obstacle.setImmovable();
+                obstacle.scored = false;
+                const bodyHeight = obstacle.displayHeight / 1.5;
+                const bodyYOffset = obstacle.displayHeight - bodyHeight;
+                obstacle.body.setSize(obstacle.displayWidth, bodyHeight).setOffset(0, bodyYOffset);
+            }
+
+            addNet() {
+                const screenWidth = this.sys.game.config.width;
+                const screenHeight = this.sys.game.config.height;
+                const netImage = this.add.image(screenWidth / 2, screenHeight / 2, 'netObstruction').setDisplaySize(screenWidth, screenHeight);
+
+                // Make sure the image is visible and fully covers the screen
+                netImage.setOrigin(0.5, 0.5); // Center the image
+
+                // Set a timer to remove the image after 1.5 seconds
+                this.time.addEvent({
+                    delay: 100*this.score, // 1500 milliseconds = 1.5 seconds
+                    callback: () => {
+                        netImage.setVisible(false);
+                        netImage.destroy;
+                    },
+                    callbackScope: this
+                });
+            }
+
+
+            addObstaclesBasedOnScore() {
+                const obstacleY1 = Phaser.Math.Between(50, this.game.config.height - 200);
+                const obstacleY2 = ((obstacleY1 + 100) % 400 ) + 50;
+                const obstacleX1 = this.game.config.width;
+                const obstacleX2 = this.game.config.width + 0.5*this.speed;
+                this.addHook(obstacleX1,obstacleY1); // This adds the first obstacle
+                // Check if the score is more than 15 to add an additional obstacle
+                if (this.score > 10) {
+                    this.addHook(obstacleX2,obstacleY2); // Add a second obstacle
+                    if (this.score % 10 == 0) {
+                        this.addNet(obstacleX1);
+                    }
+                }
+            }
+
+            addBorderSegments(segmentX) {
+                const topBorderSegment = this.topBorder.create(segmentX, 0, 'topBorder');
+                topBorderSegment.setScale(0.1);
+                topBorderSegment.setOrigin(0, 0);
+                topBorderSegment.body.setAllowGravity(false);
+                topBorderSegment.setImmovable();
+                topBorderSegment.setDepth(-1);
+
+                console.log("adding");
+
+                const bottomBorderSegment = this.bottomBorder.create(segmentX, this.game.config.height-100, 'bottomBorder');
+                bottomBorderSegment.setScale(0.1);
+                bottomBorderSegment.setOrigin(0, 0);
+                bottomBorderSegment.body.setAllowGravity(false);
+                bottomBorderSegment.setImmovable();
+                bottomBorderSegment.setDepth(-1);
+            }
+
+            hitObstacle(fish,obstacle) {
+                if (this.mainMusic) {
+                    this.mainMusic.stop();
+                }
+                this.hookSfx = this.sound.add('hookSfx', { volume: 0.5, loop: false });
+                this.hookSfx.play();
+                this.mainMusic = this.sound.add('gameOverMusic', { volume: 0.5, loop: true });
+                this.mainMusic.play();
+
+
+                fish.destroy();
+                this.physics.pause();
+                this.gameOver = true;
+                obstacle.setTexture(this.game.selectedFish+'Dead');
+                console.log(this.game.selectedFish+'Dead')
+        
+                // Display game over text
+                this.gameOverText.setVisible(true);
+                this.restartText.setVisible(true);
+                
+            
+            }
+
+            hitTopBorder(fish,border) {
+                if (this.mainMusic) {
+                    this.mainMusic.stop();
+                }
+                this.hookSfx = this.sound.add('hookSfx', { volume: 0.5, loop: false });
+                this.hookSfx.play();
+                this.mainMusic = this.sound.add('gameOverMusic', { volume: 0.5, loop: true });
+                this.mainMusic.play();
+
+                fish.setTexture('fish_dead_top');
+                this.physics.pause();
+                this.gameOver = true;
+        
+                // Display game over text
+                this.gameOverText.setVisible(true);
+                this.restartText.setVisible(true);
+            }
+
+            hitBottomBorder(fish,border) {
+                if (this.mainMusic) {
+                    this.mainMusic.stop();
+                }
+                this.hookSfx = this.sound.add('hookSfx', { volume: 0.5, loop: false });
+                this.hookSfx.play();
+                this.mainMusic = this.sound.add('mimir', { volume: 0.5, loop: false });
+                this.mainMusic.play();
+
+
+                this.fish.setTexture('fish_dead_bottom');
+                this.physics.pause();
+                this.gameOver = true;
+        
+                // Display game over text
+                this.gameOverText.setVisible(true);
+                this.restartText.setVisible(true);
+            }
+
+            resetGame(){
+                this.scene.restart();
+                this.score = 0;
+                this.speed = 5;
+                this.borderFull = false;
+                this.scoreSubmitted = false;
+            }
+
+            submitScore(fishName, score) {
+                console.log(this.userData);
+                if (!this.userData) {
+                    console.error('User data is not available.');
+                    alert('Please log in or create an account to save your scores.');
+                    return;
+                }
+                //add check for token
+                if (!this.userData.email) {
+                    console.error('Auth token is not available.');
+                    alert('Please log in or create an account to save your scores.');
+                    return;
+                }
+
+                // If both checks pass, proceed with the fetch request
+                fetch('https://localhost:5000/update_score', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    credentials: 'include', // Important for sessions
+                    body: JSON.stringify({ fish_name: fishName, score: score }),
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        // Handle non-OK responses here
+                        return response.json().then(errorData => {
+                            throw new Error(errorData.message || 'Failed to update score');
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Success:', data);
+                    // Add any UI update logic here
+                })
+                .catch((error) => {
+                    console.error('Error:', error);
+                    alert(error.message);
+                });
+                return;
+            }
+
+            updateScoreAchievements(score) {
+                // Loop through each achievement in the game
+                this.scoreAchievements.forEach(achievement => {
+                    // Check if the achievement is not already unlocked
+                    if (!achievement.unlocked) {
+                        // Check if the unlock condition is met with the current score
+                        if (achievement.unlockCondition(score)) {
+                            // Update the unlocked status to true
+                            achievement.unlocked = true;
+                            game.scene.getScene('SettingsScene').unlockFish(achievement.name);
+                            // Log or handle the unlocking of the achievement
+                            console.log(achievement.name + " unlocked!");
+                            
+                            // You can also add other code here to handle the achievement unlock,
+                            // like displaying a notification to the player.
+                        }
+                    }
+                });
+            }
+        }
+
+        class StartScene extends Phaser.Scene {
+            constructor() {
+                super({ key: 'StartScene' });
+            }
+
+            restartScene() {
+                this.scene.restart();
+            }
+
+            preload() {
+                this.load.image('checkboxChecked', 'assets/webpage/checkboxChecked.png');
+                this.load.image('checkboxUnchecked', 'assets/webpage/checkboxUnchecked.png');
+            }
+
+
+            create() {
+                if (this.mainMusic) {
+                    this.mainMusic.stop();
+                }
+
+                this.loginButton = this.add.text(400, 500, 'Login', { fontSize: '24px', fill: '#FFF' })
+                    .setInteractive()
+                    .on('pointerdown', () => this.showLoginModal());
+
+                this.registerButton = this.add.text(500, 500, 'Register', { fontSize: '24px', fill: '#FFF' })
+                    .setInteractive()
+                    .on('pointerdown', () => this.showRegisterModal());
+                
+                this.logoutButton = this.add.text(600, 520, 'Logout', { fontSize: '24px', fill: '#FFF' })
+                    .setInteractive()
+                    .on('pointerdown', () => this.logoutUser());
+                // Check if user data is available and display it
+                updateUIBasedOnSession();
+
+                // Add title text
+                this.add.text(400, 150, 'The fish of the Curonian Lagoon', { fontSize: '32px', fill: '#FFF' }).setOrigin(0.5);
+
+                // Add buttons
+                let playButton = this.add.text(400, 250, 'Pradėti', { fontSize: '24px', fill: '#FFF' })
+                    .setInteractive()
+                    .on('pointerdown', () => this.scene.start('FishSelectionScene'));
+
+                let settingsButton = this.add.text(400, 300, 'Nustatymai', { fontSize: '24px', fill: '#FFF' })
+                    .setInteractive()
+                    .on('pointerdown', () => this.scene.start('SettingsScene'));
+
+                let leaderboardButton = this.add.text(400, 350, 'Lyderių lenta', { fontSize: '24px', fill: '#FFF' })
+                    .setInteractive()
+                    .on('pointerdown', () => this.scene.start('LeaderBoard'));
+
+                // Center align
+                [playButton, settingsButton, leaderboardButton].forEach(button => button.setOrigin(0.5));
+
+
+                this.add.text(150, 450, 'Streamer mode', { fontSize: '20px', fill: '#FFF' }).setOrigin(0.5);
+                this.add.text(150, 490, '(royalty free music)', { fontSize: '10px', fill: '#FFF' }).setOrigin(0.5);
+                // Add the checkbox using sprites. Initially unchecked
+                this.checkbox = this.add.sprite(150, 470, 'checkboxUnchecked').setInteractive();
+
+                // Toggle state
+                this.checkbox.checked = false;
+
+                // Audio switch function
+                this.switchAudioTrack = (isChecked) => {
+                    const track = isChecked ? 'gameplayMusicAcapella' : 'gameplayMusic';
+                    game.scene.getScene('MyGame').mainMusicName = track;
+                };
+
+                // Click event listener for the checkbox
+                this.checkbox.on('pointerdown', () => {
+                    this.checkbox.checked = !this.checkbox.checked;
+                    this.checkbox.setTexture(this.checkbox.checked ? 'checkboxChecked' : 'checkboxUnchecked');
+                    this.switchAudioTrack(this.checkbox.checked);
+                });
+            }
+
+            showLoginModal() {
+                document.getElementById('loginModal').style.display = 'block';
+            }
+
+            showRegisterModal() {
+                document.getElementById('registerModal').style.display = 'block';
+            }
+
+            logoutUser(){
+                fetch('https://localhost:5000/logout', {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: {
+                        },
+                        body: JSON.stringify({}),
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => { throw new Error(err.message) });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Success:', data);
+                    updateUIBasedOnSession();
+                    alert("Successfully logged out! You can now log in.");
+                })
+                .catch((error) => {
+                    console.error('Error:', error);
+                    alert("Log out failed: " + error.message);
+                });
+            }
+        }
+
+        class LeaderBoard extends Phaser.Scene {
+            constructor() {
+                super({ key: 'LeaderBoard' });
+            }
+
+            create() {
+                // Add title text
+                this.add.text(400, 150, 'Lyderių lenta', { fontSize: '32px', fill: '#FFF' }).setOrigin(0.5);
+
+                let returnButton = this.add.text(this.game.config.width - 150, 16, 'Išeiti', { fontSize: '32px', fill: '#FFF' }).setInteractive();
+
+                // Fetch and display top scores
+                this.fetchTopScores();
+
+                returnButton.on('pointerdown', () => {
+                    this.scene.pause();
+                    this.scene.launch('StartScene');
+                    this.scene.stop('LeaderBoard');
+                });
+            }
+
+            fetchTopScores() {
+                fetch('https://localhost:5000/top_scores', { // Endpoint to get top scores
+                    method: 'GET',
+                    credentials: 'include', // Ensure cookies are sent
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(scores => {
+                    this.scores = scores;
+                    this.displayScores();
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    // Handle error here, e.g., display a message
+                });
+                }
+
+                displayScores() {
+                    // Display the scores on the screen
+                    let startY = 200;
+                    this.scores.forEach((score, index) => {
+                        this.add.text(200, startY + 30 * index, `${index + 1}. ${score.username}  ${score.score} -------- ${score.fish}`, { fontSize: '20px', fill: '#FFF' });
+                    });
+                }
+
+        }
+
+        class SettingsScene extends Phaser.Scene {
+            constructor() {
+                super({ key: 'SettingsScene' });
+                this.inputText = '';
+                this.textObject = null;
+            }
+
+            create() {
+                // Add title text
+                game.scene.getScene('SettingsScene').unlockFish("settingsFish");
+
+                this.add.text(400, 150, 'Settings', { fontSize: '32px', fill: '#FFF' }).setOrigin(0.5);
+
+                let returnButton = this.add.text(this.game.config.width - 150, 16, 'Išeiti', { fontSize: '32px', fill: '#FFF' }).setInteractive();
+
+                returnButton.on('pointerdown', () => {
+                    this.scene.pause();
+                    this.scene.launch('StartScene');
+                    this.scene.stop('SettingsScene');
+                });
+
+                // Draw input box
+                let graphics = this.add.graphics();
+                graphics.fillStyle(0xffffff, 1);
+                graphics.fillRect(200, 200, 400, 50);
+
+                // Text object for user input
+                this.textObject = this.add.text(210, 210, '', { font: '32px Arial', fill: '#000' });
+
+                // Interactive button for submission
+                let submitButton = this.add.text(400, 300, 'Unlock Fish', { font: '32px Arial', fill: '#fff' })
+                    .setInteractive()
+                    .on('pointerdown', () => this.unlockFish(this.inputText));
+
+                // Capture keyboard input
+                this.input.keyboard.on('keydown', this.handleKeyInput, this);            
+            }
+
+            handleKeyInput(event) {
+                // Handle backspace
+                if (event.keyCode === 8 && this.inputText.length > 0) {
+                    this.inputText = this.inputText.substr(0, this.inputText.length - 1);
+                }
+                // Handle regular characters
+                else if (event.keyCode >= 48 && event.keyCode < 90) {
+                    this.inputText += event.key;
+                }
+
+                // Update text object
+                this.textObject.setText(this.inputText);
+            }
+
+
+            unlockFish(unlockingKeyword) {
+                fetch('https://localhost:5000/unlock_fish', {
+                    method: 'POST',
+                    credentials: 'include', // Ensure cookies are sent
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ unlocking_keyword: unlockingKeyword }),
+                })
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message); // Display response message
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+            }
+
+        }
+
+
+        class FishSelectionScene extends Phaser.Scene {
+            constructor() {
+                super({ key: 'FishSelectionScene' });
+            }
+
+            preload() {
+                this.load.image('starkis', 'assets/fish/starkis.png');
+                this.load.image('auksle', 'assets/fish/auksle.png');
+                this.load.image('eserys', 'assets/fish/eserys.png');
+                this.load.image('dygle', 'assets/fish/dygle.png')
+                this.load.image('nustatymzuve', 'assets/fish/nustatymzuve.png')
+                this.load.image('banginisNX', 'assets/fish/banginisNX.png')
+
+                this.load.spritesheet('starkisGif', 'assets/fish/starkisGif.png', { frameWidth: 440, frameHeight: 191 });
+                this.load.spritesheet('auksleGif', 'assets/fish/auksleGif.png', { frameWidth: 440, frameHeight: 191 });
+                this.load.spritesheet('eserysGif', 'assets/fish/eserysGif.png', { frameWidth: 440, frameHeight: 191 });
+                this.load.spritesheet('nustatymzuveGif', 'assets/fish/nustatymzuveGif.png', { frameWidth: 440, frameHeight: 191 });
+                this.load.spritesheet('banginisNXGif', 'assets/fish/banginisNXGif.png', { frameWidth: 440, frameHeight: 191 });
+            }
+
+            create() {
+
+                this.anims.create({
+                    key: 'starkisAnim',
+                    frames: this.anims.generateFrameNumbers('starkisGif', { start: 0, end: 27 }),
+                    frameRate: 28,
+                    repeat: -1,
+                });
+                this.anims.create({
+                    key: 'auksleAnim',
+                    frames: this.anims.generateFrameNumbers('auksleGif', { start: 0, end: 35 }),
+                    frameRate: 50,
+                    repeat: -1,
+                });
+                this.anims.create({
+                    key: 'eserysAnim',
+                    frames: this.anims.generateFrameNumbers('auksleGif', { start: 0, end: 35 }),
+                    frameRate: 50,
+                    repeat: -1,
+                });
+
+                // Retrieve unlocked fishes from user data, default to ['starkis'] if not available
+                const unlockedFishes = game.scene.getScene('MyGame').userData && game.scene.getScene('MyGame').userData.unlocked_fishes.length > 0 
+                                    ? game.scene.getScene('MyGame').userData.unlocked_fishes 
+                                    : ['starkis'];
+
+                
+                // Display fish options in a grid
+                const allFishOptions = [
+                    { key: 'starkis', x: 100, y: 100, anim: 'starkisAnim'  },
+                    { key: 'auksle', x: 250, y: 100, anim: 'auksleAnim' },
+                    { key: 'eserys', x: 400, y: 100, anim: 'eserysAnim' },
+                    { key: 'dygle', x: 100, y: 250, anim: 'starkisAnim' },
+                    { key: 'nustatymzuve', x: 250, y: 250, anim: 'starkisAnim' },
+                    { key: 'banginisNX', x: 400, y: 250, anim: 'starkisAnim' },
+                ];
+
+                // Filter fish options to only include unlocked fishes
+                const fishOptions = allFishOptions.filter(fish => unlockedFishes.includes(fish.key));
+
+
+                // Placeholder for the animation
+                let animPlaceholder = this.add.sprite(600, 300, 'fish1Anim').setVisible(false).setScale(0.5);
+                
+                // Placeholder for fish information
+                let infoText = this.add.text(500, 400, '', { fontSize: '16px', fill: '#FFF' }).setVisible(false);
+
+                fishOptions.forEach(fish => {
+                    let fishSprite = this.add.sprite(fish.x, fish.y, fish.key)
+                    .setScale(0.5)
+                    .setInteractive();
+
+                    // Hover event
+                    fishSprite.on('pointerover', () => {
+                        animPlaceholder.setVisible(true);
+                        animPlaceholder.play(fish.anim);
+
+                        let fishInfo = getFishInfo(fish.key);
+                        infoText.setText(`Name: ${fishInfo.name}\nInfo: ${fishInfo.info}`);
+                        infoText.setVisible(true);
+                    });
+
+                    // Out event
+                    fishSprite.on('pointerout', () => {
+                        animPlaceholder.stop();
+                        animPlaceholder.setVisible(false);
+                        infoText.setVisible(false);
+                    });
+
+                    // Click event
+                    fishSprite.on('pointerdown', () => {
+                        this.game.selectedFish = fish.key;
+                        this.scene.start('MyGame');
+                        game.scene.getScene('MyGame').gameStopped = false;
+                    });
+                });
+
+                function getFishInfo(key) {
+                    // Define fish information here
+                    const fishData = {
+                        'starkis': { name: 'Starkis', info: 'Žuvis' },
+                        'auksle': { name: 'Aukšlė', info: 'mažesnė žuvis' },
+                        'eserys': { name: 'Ešerys', info: 'ešerys' },
+                        'dygle': { name: 'Dyglė', info: 'pointy' },
+                        'nustatymzuve': { name: 'settings Fish', info: 'setting' },
+                        'banginisNX': { name: 'BANGINIS NX', info: 'zeuru' },
+                        // ... additional fish data
+                    };
+
+                    return fishData[key] || { name: 'Unknown', info: 'No information available.' };
+                }
+
+                // Add a back button
+                let backButton = this.add.text(400, 550, 'Back', { fontSize: '24px', fill: '#FFF' })
+                    .setInteractive()
+                    .on('pointerdown', () => this.scene.start('StartScene'));
+            }
+        }
+
+        function updateUIBasedOnSession() {
+            fetch('https://localhost:5000/get_user_data', { // Endpoint to get user data
+                method: 'GET',
+                credentials: 'include', // Ensure cookies are sent
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                    let startScene = game.scene.getScene('StartScene');
+                    game.scene.getScene('MyGame').userData = null;
+                    startScene.loginButton.setVisible(true);
+                    startScene.registerButton.setVisible(true);
+                    startScene.logoutButton.setVisible(false);
+
+                }
+                return response.json();
+            })
+            .then(userData => {
+                // Update UI based on user data
+                if (userData && userData.username) {
+                    // Assuming you have a way to access your Phaser game instance, e.g., game
+                    // Add text to show the user is logged in 
+                    let startScene = game.scene.getScene('StartScene');
+                    console.log(userData);
+                    game.scene.getScene('MyGame').userData = userData;
+                    game.scene.getScene('StartScene').loginText = game.scene.getScene('StartScene').add.text(400, 470, 'Prisijungęs: ' + userData.username, { fontSize: '16px', fill: '#FFF' });
+                    startScene.loginButton.setVisible(false);
+                    startScene.registerButton.setVisible(false);
+                    startScene.logoutButton.setVisible(true);
+                    if (userData.unlocked_fishes && userData.unlocked_fishes.length == 0) {
+                        game.scene.getScene('SettingsScene').unlockFish("auksle");
+                        game.scene.getScene('SettingsScene').unlockFish("starkis");
+
+                    }
+                } else{
+                    
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                let startScene = game.scene.getScene('StartScene');
+                game.scene.getScene('MyGame').userData = null;
+                startScene.loginButton.setVisible(true);
+                startScene.registerButton.setVisible(true);
+                startScene.logoutButton.setVisible(false);
+                game.scene.getScene('StartScene').loginText.destroy(); 
+                // Handle errors here, such as showing a login prompt
+            });
+        }
+
+        window.onload = function() {
+            var loginButton = document.getElementById('loginBtn');
+            if (loginButton) {
+                loginButton.addEventListener('click', () => {
+                    var identifier = document.getElementById('loginIdentifier').value;
+                    var password = document.getElementById('loginPassword').value;
+
+                    fetch('https://localhost:5000/login', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        credentials: 'include', // Important for sessions
+                        body: JSON.stringify({ identifier: identifier, password: password }),
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            // Handle non-OK responses here
+                            return response.json().then(errorData => {
+                                throw new Error(errorData.message || 'Login failed');
+                            });
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        console.log('Success:', data);
+                        document.getElementById('loginModal').style.display = 'none';
+                        updateUIBasedOnSession();
+                    })
+                    .catch((error) => {
+                        console.error('Error:', error);
+                        alert(error.message);
+                    });
+                });
+            }
+
+
+            var registerButton = document.getElementById('registerBtn');
+            if (registerButton) {
+                registerButton.addEventListener('click', () => {
+                    var username = document.getElementById('registerUsername').value;
+                    var email = document.getElementById('registerEmail').value;
+                    var password = document.getElementById('registerPassword').value;
+
+                    fetch('https://localhost:5000/register', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ username: username, email: email, password: password }),
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            return response.json().then(err => { throw new Error(err.message) });
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        console.log('Success:', data);
+                        document.getElementById('registerModal').style.display = 'none';
+                        alert("Successfully registered! You can now log in.");
+                    })
+                    .catch((error) => {
+                        console.error('Error:', error);
+                        alert("Registration failed: " + error.message);
+                    });
+                });
+
+            }
+
+        };
+
+
+        const config = {
+            type: Phaser.AUTO,
+            parent: 'canvasContainer',
+            width: 800,
+            height: 600,
+            physics: {
+                default: 'arcade',
+                arcade: {
+                    gravity: { y: 1500 },
+                    debug: false
+                }
+            },
+            scene: [StartScene, FishSelectionScene, MyGame, LeaderBoard, SettingsScene],
+        };
+        
+        const game = new Phaser.Game(config);
+
+    </script>
+</body>
+</html>
+    
+    

@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three.js webgl - shaders - ocean</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		
+	</head>
+	<body>
+
+		<div id="container"></div>
+		<div id="info">
+			<a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> - webgl ocean
+		</div>
+
+		<script type="importmap">
+			{
+				"imports": {
+					"three": "./three.module.js",
+					"three/addons/": "./jsm/"
+				}
+			}
+		</script>
+
+		<script type="module">
+
+			import * as THREE from 'three';
+			import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+			import Stats from 'three/addons/libs/stats.module.js';
+
+			import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+			import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+			import { Water } from 'three/addons/objects/Water.js';
+			import { Sky } from 'three/addons/objects/Sky.js';
+
+			
+			let container, stats;
+			let camera, scene, renderer;
+			let controls, water, sun, blacksmith, karpis, auksle, eserys;
+			// Initialize these variables at the top of your script
+			let isTransitioning = false;
+			let targetPosition = new THREE.Vector3();  // Target position to move to
+			let transitionSpeed = 0.05;  // Speed of the transition
+
+			// Raycaster for mouse picking
+			const raycaster = new THREE.Raycaster();
+			const mouse = new THREE.Vector2();
+			let fishObjects = []; 
+
+			init();
+			animate();
+
+			function init() {
+				container = document.getElementById( 'container' );
+
+				//
+
+				renderer = new THREE.WebGLRenderer();
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				renderer.toneMapping = THREE.ACESFilmicToneMapping;
+				renderer.toneMappingExposure = 0.5;
+				container.appendChild( renderer.domElement );
+
+				//
+
+				scene = new THREE.Scene();
+
+				camera = new THREE.PerspectiveCamera( 55, window.innerWidth / window.innerHeight, 1, 20000 );
+				camera.position.set( 30, 30, 100 );
+
+				const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+				scene.add(ambientLight);
+
+				//
+
+				sun = new THREE.Vector3();
+
+				// Water
+
+				const waterGeometry = new THREE.PlaneGeometry( 10000, 10000 );
+
+				water = new Water(
+					waterGeometry,
+					{
+						textureWidth: 512,
+						textureHeight: 512,
+						waterNormals: new THREE.TextureLoader().load( 'textures/waternormals.jpg', function ( texture ) {
+
+							texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+
+						} ),
+						sunDirection: new THREE.Vector3(),
+						sunColor: 0xffffff,
+						waterColor: 0x001e0f,
+						distortionScale: 8,
+						fog: scene.fog !== undefined
+					}
+				);
+
+				water.rotation.x = - Math.PI / 2;
+
+				scene.add( water );
+				
+				container = document.getElementById( 'container' );
+
+				// Skybox
+				const vertexShader = `
+					varying vec3 vWorldPosition;
+					void main() {
+						vec4 worldPosition = modelMatrix * vec4( position, 1.0 );
+						vWorldPosition = worldPosition.xyz;
+						gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+					}
+				`;
+
+				const fragmentShader = `
+					varying vec3 vWorldPosition;
+					uniform vec3 topColor;
+					uniform vec3 bottomColor;
+					uniform float offset;
+					uniform float exponent;
+
+					void main() {
+						float h = normalize( vWorldPosition + offset ).y;
+						gl_FragColor = vec4( mix( bottomColor, topColor, max( pow( max(h, 0.0), exponent ), 0.0 ) ), 1.0 );
+					}
+				`;
+
+
+				const topColor = new THREE.Color(0xFFFFFF); // Blue-ish color for the top
+				const bottomColor = new THREE.Color(0xd3d3d3); // White color for the bottom
+
+				const gradientMaterial = new THREE.ShaderMaterial({
+					vertexShader: vertexShader,
+					fragmentShader: fragmentShader,
+					uniforms: {
+						topColor: { value: topColor },
+						bottomColor: { value: bottomColor },
+						offset: { value: 33 },
+						exponent: { value: 0.6 },
+						sunPosition: { value: new THREE.Vector3() } // Add this line
+					},
+					side: THREE.BackSide
+				});
+
+				const sky = new Sky();
+				sky.scale.setScalar( 10000 );
+				scene.add( sky );
+
+				const skyUniforms = sky.material.uniforms;
+
+				// Replace the sky material
+				sky.material = gradientMaterial;
+				
+				skyUniforms[ 'turbidity' ].value = 10;
+				skyUniforms[ 'rayleigh' ].value = 2;
+				skyUniforms[ 'mieCoefficient' ].value = 0.005;
+				skyUniforms[ 'mieDirectionalG' ].value = 0.8;
+
+				const parameters = {
+					elevation: 2,
+					azimuth: 180
+				};
+
+				const pmremGenerator = new THREE.PMREMGenerator( renderer );
+				const sceneEnv = new THREE.Scene();
+
+				let renderTarget;
+
+				function updateSun() {
+
+					const phi = THREE.MathUtils.degToRad( 90 - parameters.elevation );
+					const theta = THREE.MathUtils.degToRad( parameters.azimuth );
+
+					sun.setFromSphericalCoords( 1, phi, theta );
+					
+					sky.material.uniforms[ 'sunPosition' ].value.copy( sun );
+					water.material.uniforms[ 'sunDirection' ].value.copy( sun ).normalize();
+
+					if ( renderTarget !== undefined ) renderTarget.dispose();
+
+					sceneEnv.add( sky );
+					renderTarget = pmremGenerator.fromScene( sceneEnv );
+					scene.add( sky );
+
+					scene.environment = renderTarget.texture;
+
+				}
+
+				updateSun();
+
+				
+				//
+
+				controls = new OrbitControls( camera, renderer.domElement );
+				controls.maxPolarAngle = Math.PI * 0.4;
+				controls.target.set( 0, 10, 0 );
+				controls.minDistance = 40.0;
+				controls.maxDistance = 200.0;
+				controls.update();
+
+				//
+
+				stats = new Stats();
+				container.appendChild( stats.dom );
+
+				const waterUniforms = water.material.uniforms;
+				console.log("water",waterUniforms.size);
+				waterUniforms.size = {value: 30};
+
+				window.addEventListener( 'resize', onWindowResize );
+
+				const fogColor = 0xaaaaaa;  // Grey color for fog
+				const nearDistance = 100;   // The minimum distance to start applying fog. Objects closer than this are fully visible.
+				const farDistance = 300;   // The maximum distance at which everything is completely fogged out.
+
+				scene.fog = new THREE.Fog(fogColor, nearDistance, farDistance);
+				// Call the function to load your OBJ
+				loadOBJ();
+				loadOBJModel(
+					'./objects/blacksmith.obj',                 // OBJ file path
+					'./textures/blacksmith.png',         // Texture file path
+					{ x: 80, y: 15, z: 30 },          // Initial position
+					{ x: 10, y: 10, z: 10 },           // Scale
+					(loadedObject) => { blacksmith = loadedObject; }  // Callback after loading
+				);
+				loadOBJModel(
+					'./blenderFish/karpis.obj',                 // OBJ file path
+					'./blenderFish/karpis_texture.png',         // Texture file path
+					{ x: 0, y: 20, z: -80 },          // Initial position
+					{ x: 80, y: 80, z: 80 },           // Scale
+					(loadedObject) => { karpis = loadedObject; fishObjects.push(karpis);}  // Callback after loading
+				);
+
+				loadOBJModel(
+					'./blenderFish/auksle.obj',                 // OBJ file path
+					'./blenderFish/auksle_texture.jpg',         // Texture file path
+					{ x: 0, y: 20, z: 50 },          // Initial position
+					{ x: 25, y: 25, z: 25 },           // Scale
+					(loadedObject) => { auksle = loadedObject; fishObjects.push(auksle);}  // Callback after loading
+				);
+				loadOBJModel(
+					'./blenderFish/eserys.obj',                 // OBJ file path
+					'./blenderFish/eserys_texture.png',         // Texture file path
+					{ x: -50, y: 20, z: 50 },          // Initial position
+					{ x: 5, y: 5, z: 5 },           // Scale
+					(loadedObject) => { eserys = loadedObject; fishObjects.push(eserys);}  // Callback after loading
+				);
+
+			fishObjects = [karpis, auksle, eserys]; // Add all your fish objects here
+
+			}
+
+			function loadOBJ() {
+				var loader = new OBJLoader();
+				var textureLoader = new THREE.TextureLoader(); // Create a texture loader
+
+				textureLoader.load(
+					'./textures/landscape.jpg', // Replace with the path to your texture file
+					function (texture) {
+						texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+            			texture.repeat.set(20, 20);
+						loader.load(
+							'./landscape.obj',
+							function (object) {
+								// Create a material with the loaded texture
+								var texturedMaterial = new THREE.MeshStandardMaterial({ map: texture });
+
+								// Apply the material to each child if the object is a group
+								object.traverse(function (child) {
+									if (child.isMesh) {
+										child.material = texturedMaterial;
+									}
+								});
+
+								object.position.set(-20, 0, -200); // Adjust position
+								object.scale.set(50, 50, 50); // Adjust scale
+								scene.add(object);
+								console.log("OBJ loaded with texture and added to scene at position", object.position);
+							},
+							function (xhr) {
+								console.log((xhr.loaded / xhr.total * 100) + '% loaded');
+							},
+							function (error) {
+								console.log('An error happened during loading: ' + error);
+							}
+						);
+					},
+					undefined, // Optional: Function for onProgress event
+					function (error) {
+						console.log('An error occurred while loading the texture: ' + error);
+					}
+				);
+			}
+
+
+
+			function loadOBJModel(path, texturePath, position = { x: 0, y: 0, z: 0 }, scale = { x: 1, y: 1, z: 1 }, onLoadCallback) {
+				const loader = new OBJLoader();
+				const textureLoader = new THREE.TextureLoader();
+
+				loader.load(
+					path,
+					function (object) {
+						const texture = textureLoader.load(texturePath);  // Load the texture
+
+						// Apply the texture to each child if the object is a group
+						object.traverse(function (child) {
+							if (child.isMesh) {
+								child.material = new THREE.MeshStandardMaterial({ map: texture });
+							}
+						});
+
+						object.position.set(position.x, position.y, position.z);
+						object.scale.set(scale.x, scale.y, scale.z);
+						scene.add(object);
+
+						if (onLoadCallback) onLoadCallback(object);
+					},
+					function (xhr) {
+						console.log((xhr.loaded / xhr.total * 100) + '% loaded');
+					},
+					function (error) {
+						console.log('An error happened during loading: ' + error);
+					}
+				);
+			}
+
+
+
+
+			function startTransition(newTarget) {
+				targetPosition.copy(newTarget);
+				isTransitioning = true;
+			}
+
+			function updateCameraTarget() {
+				if (isTransitioning) {
+					// Interpolate between current target and new target position
+					controls.target.lerpVectors(controls.target, targetPosition, transitionSpeed);
+
+					// Check if the target is close enough to the desired position
+					if (controls.target.distanceTo(targetPosition) < 0.1) {
+						controls.target.copy(targetPosition);
+						isTransitioning = false;  // Stop the transition
+					}
+
+					controls.update();
+				}
+			}
+
+
+
+			function onMouseClick(event) {
+				// Calculate mouse position in normalized device coordinates
+				mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+				mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+				// Update the picking ray with the camera and mouse position
+				raycaster.setFromCamera(mouse, camera);
+
+				// Filter out any undefined objects
+				const definedFishObjects = fishObjects.filter(obj => obj !== undefined);
+
+				// Check for intersections with the fish objects
+				const intersects = raycaster.intersectObjects(definedFishObjects, true);
+
+				if (intersects.length > 0) {
+					const clickedObject = intersects[0].object;
+
+					// Find which fish was clicked (assuming each fish is a unique object)
+					const clickedFish = definedFishObjects.find(fish => fish === clickedObject || fish.children.includes(clickedObject));
+
+					if (clickedFish) {
+						console.log('A fish was clicked:', clickedFish);
+
+						// Update controls target to the position of the clicked fish
+						const fishPosition = new THREE.Vector3();
+						clickedFish.getWorldPosition(fishPosition);
+						//controls.target.set(fishPosition.x, fishPosition.y, fishPosition.z);
+						startTransition(fishPosition);
+
+						// Update the camera to look at the new target
+						controls.update();
+					}
+				}
+			}
+
+			window.addEventListener('click', onMouseClick, false);
+
+
+
+
+
+
+
+			function onWindowResize() {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			}
+
+			function animate() {
+				if (isTransitioning === undefined) {
+					console.log("isTransitioning is undefined");
+					// Initialize or set a default value
+					isTransitioning = false;
+				}
+
+
+
+				requestAnimationFrame( animate );
+				
+				updateCameraTarget();
+				render();
+				stats.update();
+
+			}
+
+			function render() {
+
+				const time = performance.now() * 0.001;
+
+
+
+				if (karpis) {
+					karpis.position.y = Math.sin(time) * 20 + 30;
+					karpis.rotation.y = time * 0.5;
+				}
+				if (auksle) {
+					auksle.position.y = Math.sin(time) * 20 + 30;
+					auksle.rotation.y = time * 0.5;
+
+				}
+				if (eserys) {
+					eserys.position.y = Math.sin(time) * 20 + 30;
+					eserys.rotation.y = time * 0.5;
+
+				}
+
+				water.material.uniforms[ 'time' ].value += 1.0 / 60.0;
+
+				renderer.render( scene, camera );
+
+			}
+
+		</script>
+	</body>
+</html>
